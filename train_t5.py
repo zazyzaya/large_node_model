@@ -8,21 +8,19 @@ from models.node_t5 import NodeT5
 
 DEVICE = 2
 EPOCHS = 10
-BS = 50
-WALK_LEN = 6
+MINI_BS = 16
+BS = 512
+WALK_LEN = 16
 
 class Scheduler(LRScheduler):
     def get_lr(self):
         return [(1 / ( (max(10_000, self.last_epoch) ** 0.5) *10))
                 for group in self.optimizer.param_groups]
 
-def minibatch(opt, sched, g, b, model: NodeT5):
-    opt.zero_grad()
-    walks = g.rw(b, WALK_LEN)
+def minibatch(g, mb, model: NodeT5):
+    walks = g.rw(mb, WALK_LEN)
     loss = model(walks)
     loss.backward()
-    opt.step()
-    sched.step()
 
     return loss.item()
 
@@ -34,28 +32,46 @@ def train(g: CSR, model: NodeT5):
     with open('log.txt', 'w+') as f:
         pass
 
+    steps = 0
+    updates = 0
+    opt.zero_grad()
+    st = time.time()
+
     for e in range(EPOCHS):
-        batches = starters[torch.randperm(starters.size(0))]
-        batches = batches.split(BS)
+        minibatches = starters[torch.randperm(starters.size(0))]
+        minibatches = minibatches.split(MINI_BS)
 
         losses = []
+        for i,mb in enumerate(minibatches):
 
-        for i,b in enumerate(batches):
-            st = time.time()
-            loss = minibatch(opt, scheduler, g, b, model)
+            loss = minibatch(g, mb, model)
             if i % 1000 == 999:
                 torch.save(
                     (model.args, model.kwargs, model.state_dict()),
                     't5.pt'
                 )
 
-            with open('log.txt', 'a+') as f:
-                f.write(f'{loss},{i}\n')
-
             en = time.time()
+            steps += 1
+            losses.append(loss)
 
-            if i % 10 == 0:
-                print(f'[{e}-({i}/{len(batches)})] {loss} ({en-st:0.2f}s)')
+            if steps*MINI_BS > BS:
+                opt.step()
+                scheduler.step()
+                en = time.time()
+
+                # Log epoch
+                avg_loss = sum(losses) / len(losses)
+                with open('log.txt', 'a') as f:
+                    f.write(f'{avg_loss},{updates}\n')
+                print(f'[{e}-({i}/{len(minibatches)})] {sum(losses)/len(losses)} ({en-st:0.2f}s)')
+
+                # Reset accumulators
+                st = time.time()
+                losses = []
+                opt.zero_grad()
+                steps = 0
+                updates += 1
 
         torch.save(
             (model.args, model.kwargs, model.state_dict()),
