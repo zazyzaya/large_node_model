@@ -4,7 +4,7 @@ from models.node_t5 import NodeT5
 from wiki_sampler import load_g
 
 DEVICE=3
-BS = 600
+BS = 500
 
 def get_rank(x, indices):
    vals = x[range(len(x)), indices]

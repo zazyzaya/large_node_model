@@ -93,7 +93,6 @@ class NodeT5(nn.Module):
         '''
         For link prediction, input will always be
             src: Head,       Rel,   <sentinal>
-            dst: <sentinal>, <end>, <pad>
             tgt: <sentinal>, Tail,  <end>
         '''
         src = torch.full((3,len(head)), self.SENTINAL) # 3 x B
