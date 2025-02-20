@@ -44,22 +44,22 @@ def train(g: CSR, model: NodeBERT):
     st = time.time()
 
     e = 0
-    while steps < MAX_STEPS:
+    while updates < MAX_STEPS:
         minibatches = starters[torch.randperm(starters.size(0))]
         minibatches = minibatches.split(MINI_BS)
 
         losses = []
         for i,mb in enumerate(minibatches):
             loss = minibatch(g, mb, model)
-            if steps % 1000 == 999:
+
+            if updates % 100 == 99:
                 torch.save(
                     (model.args, model.kwargs, model.state_dict()),
                     'bert.pt'
                 )
 
-            en = time.time()
-            steps += 1
             losses.append(loss)
+            steps += 1
 
             if steps*MINI_BS >= BS:
                 opt.step()
@@ -78,6 +78,9 @@ def train(g: CSR, model: NodeBERT):
                 opt.zero_grad()
                 steps = 0
                 updates += 1
+
+                if updates > MAX_STEPS:
+                    break
 
         e += 1
         torch.save(
