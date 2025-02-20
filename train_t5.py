@@ -8,9 +8,9 @@ from models.node_t5 import NodeT5
 
 DEVICE = 2
 EPOCHS = 10
-MINI_BS = 16
-BS = 512
-WALK_LEN = 16
+MINI_BS = 4
+BS = 64
+WALK_LEN = 32
 
 class Scheduler(LRScheduler):
     def get_lr(self):
@@ -55,7 +55,7 @@ def train(g: CSR, model: NodeT5):
             steps += 1
             losses.append(loss)
 
-            if steps*MINI_BS > BS:
+            if steps*MINI_BS >= BS:
                 opt.step()
                 scheduler.step()
                 en = time.time()
@@ -81,5 +81,8 @@ def train(g: CSR, model: NodeT5):
 
 if __name__ == '__main__':
     g = CSR().load('wikikg2_train')
-    model = NodeT5(g.vocab_size, device=DEVICE)
+
+    # BERT Mini
+    model = NodeT5(g.vocab_size, device=DEVICE, layers=4, hidden_size=256)
+
     train(g,model)
