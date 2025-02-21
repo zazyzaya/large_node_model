@@ -1,10 +1,10 @@
 import torch
 
 from models.node_bert import NodeBERT
-from wiki_sampler import load_g
+from wiki_sampler import load_g, load_g_ddi
 
 DEVICE=3
-BS = 1000
+BS = 3000
 
 def get_rank(x, indices):
    vals = x[range(len(x)), indices]
@@ -16,6 +16,7 @@ def print_stats(mrr):
     print('hits@1: ', (mrr<=1).float().mean())
     print('hits@5: ', (mrr<=5).float().mean())
     print('hits@10: ', (mrr<=10).float().mean())
+    print('hits@20: ', (mrr<=20).float().mean())
     print('hits@100: ', (mrr<=100).float().mean())
     print('hits@1000: ', (mrr<=1000).float().mean())
     print()
@@ -27,7 +28,7 @@ def eval(g, model: NodeBERT):
     mrr = torch.tensor([], dtype=torch.long)
     for i,b in enumerate(batches):
         h = torch.from_numpy(g['head'][b])
-        r = torch.from_numpy(g['relation'][b]) + 2_500_604
+        r = torch.from_numpy(g['relation'][b]) + 4267
         t = g['tail'][b]
 
         preds = model.link_prediction(h,r)
@@ -36,15 +37,15 @@ def eval(g, model: NodeBERT):
 
         if i % 10 == 0 :
             print(f'{i+1}/{len(batches)}')
-            print_stats(mrr)
+            print_stats(mrr+1)
 
     print("Final:")
-    print_stats(mrr)
+    print_stats(mrr+1)
 
 if __name__ == '__main__':
     args,kwargs,sd = torch.load('bert.pt', weights_only=False, map_location=f'cuda:{DEVICE}')
     model = NodeBERT(*args, **kwargs, device=DEVICE)
     model.eval()
 
-    g = load_g('test')
+    g = load_g_ddi('test')
     eval(g, model)

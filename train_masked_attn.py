@@ -4,7 +4,7 @@ from torch.optim.adam import Adam
 from torch.optim.lr_scheduler import LRScheduler
 
 from csr import CSR_np as CSR
-from models.node_bert import NodeBERT
+from models.masked_attention import MaskedAttentionEmb
 
 DEVICE = 2
 MAX_STEPS = 1_000_000
@@ -23,14 +23,14 @@ class Scheduler(LRScheduler):
             return [group['initial_lr'] * (1 - ((self.last_epoch-10_000)/(MAX_STEPS-10_000)))
                     for group in self.optimizer.param_groups]
 
-def minibatch(g, mb, model: NodeBERT):
+def minibatch(g, mb, model: MaskedAttentionEmb):
     walks = g.rw(mb, WALK_LEN)
     loss = model(walks)
     loss.backward()
 
     return loss.item()
 
-def train(g: CSR, model: NodeBERT):
+def train(g: CSR, model: MaskedAttentionEmb):
     starters = g.nodes_with_neighbors
     opt = Adam(model.parameters(), lr=1e-4, weight_decay=0.01)
     scheduler = Scheduler(opt)
@@ -83,21 +83,23 @@ def train(g: CSR, model: NodeBERT):
                     break
 
         e += 1
+        '''
         # Don't do this for small dataset
         torch.save(
             (model.args, model.kwargs, model.state_dict()),
             f'bert-{e}.pt'
         )
+        '''
 
 
 
 if __name__ == '__main__':
-    g = CSR().load('wikikg2_train')
+    g = CSR().load('ddi_train')
     num_nodes = g.num_nodes
     num_rels = g.vocab_size - num_nodes
 
     # BERT Mini
-    model = NodeBERT(
+    model = MaskedAttentionEmb(
         num_nodes, num_rels,
         device=DEVICE,
         layers=4,

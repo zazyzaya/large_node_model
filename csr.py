@@ -17,6 +17,14 @@ class CSR:
         return len(self.ptr) - 1
 
     @property
+    def num_rels(self):
+        return self.vocab_size - self.num_nodes
+
+    @property
+    def self_loop(self):
+        return self.num_nodes + self.num_rels - 1
+
+    @property
     def nodes_with_neighbors(self):
         ret = []
         for i in range(len(self.ptr)-1):
@@ -90,8 +98,9 @@ class CSR:
     def save(self, fname):
         torch.save((self.idx, self.ptr, self.rel), fname)
     def load(self, fname):
-        idx,ptr,rel = torch.load(fname)
+        idx,ptr,rel = torch.load(f'graphs/{fname}.pt')
         self.idx = idx.long(); self.ptr = ptr.long(); self.rel = rel.long()
+        return self
 
 class CSR_np(CSR):
     def from_torch(csr: CSR, fname='wikikg2_train'):
@@ -116,7 +125,12 @@ class CSR_np(CSR):
             neigh, rels = self._get_one(walk[-1])
             idx = randint(0, len(neigh)-1)
             walk.append(rels[idx])
-            walk.append(neigh[idx])
+
+            # Self-loop means start over
+            if rels[idx] == self.self_loop:
+                walk.append(st)
+            else:
+                walk.append(neigh[idx])
 
         return walk
 
