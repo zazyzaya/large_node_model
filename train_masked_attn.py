@@ -8,23 +8,23 @@ from models.masked_attention import MaskedAttentionEmb
 
 DEVICE = 2
 MAX_STEPS = 1_000_000
-MINI_BS = 128
-BS = 256
+MINI_BS = 64
+BS = 64
 WALK_LEN = 128
 
 class Scheduler(LRScheduler):
     def get_lr(self):
         # Warmup period of 10k steps
-        if self.last_epoch < 10_000:
-            return [group['initial_lr'] * (self.last_epoch / 10_000)
+        if self.last_epoch < 1_000:
+            return [group['initial_lr'] * (self.last_epoch / 1_000)
                     for group in self.optimizer.param_groups]
         # Linear decay after that
         else:
-            return [group['initial_lr'] * (1 - ((self.last_epoch-10_000)/(MAX_STEPS-10_000)))
+            return [group['initial_lr'] * (1 - ((self.last_epoch-1_000)/(MAX_STEPS-1_000)))
                     for group in self.optimizer.param_groups]
 
 def minibatch(g, mb, model: MaskedAttentionEmb):
-    walks = g.rw(mb, WALK_LEN)
+    walks = g.rw(mb, WALK_LEN, include_rel=False)
     loss = model(walks)
     loss.backward()
 
@@ -55,7 +55,13 @@ def train(g: CSR, model: MaskedAttentionEmb):
             if updates % 1000 == 999:
                 torch.save(
                     (model.args, model.kwargs, model.state_dict()),
-                    'bert.pt'
+                    'masked_attn.pt'
+                )
+
+            if updates % 10000 == 9999:
+                torch.save(
+                    (model.args, model.kwargs, model.state_dict()),
+                    f'masked_attn-{(updates+1)//10000}.pt'
                 )
 
             losses.append(loss)
@@ -103,7 +109,8 @@ if __name__ == '__main__':
         num_nodes, num_rels,
         device=DEVICE,
         layers=4,
-        hidden_size=256
+        hidden_size=256,
+        context_window=2
     )
 
     train(g,model)

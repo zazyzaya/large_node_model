@@ -70,7 +70,7 @@ def load_g_ddi(partition='test'):
     pt = torch.load(f'{ROOT}/ogbl_ddi/split/target/{partition}.pt', weights_only=False)
     head,tail = pt['edge'].T
     rel = np.zeros(head.shape, dtype=int)
-    return {'head': head, 'relation': rel, 'tail': tail}
+    return {'head': head, 'relation': rel, 'tail': tail, 'neg': pt['edge_neg'].T}
 
 if __name__ == '__main__':
     load_g_ddi()

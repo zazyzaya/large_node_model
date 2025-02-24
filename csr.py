@@ -78,7 +78,7 @@ class CSR:
             return zip(*[self._get_one(i) for i in idx])
         return self._get_one(idx)
 
-    def rw(self, batch, walk_len):
+    def rw(self, batch, walk_len, include_rel=True):
         walks = [batch]
 
         for _ in range(walk_len):
@@ -90,7 +90,11 @@ class CSR:
                 next_r[j] = choice(rels[j])
                 next_n[j] = choice(neighbors[j])
 
-            walks += [next_r, next_n]
+            if include_rel:
+                walks += [next_r, next_n]
+            else:
+                walks += [next_n]
+
             batch = next_n
 
         return torch.stack(walks, dim=1) # B x S
@@ -119,12 +123,14 @@ class CSR_np(CSR):
         return np_csr
 
 
-    def _rw_from_one(self, st, walk_len):
+    def _rw_from_one(self, st, walk_len, include_rel):
         walk = [st]
         for _ in range(walk_len):
             neigh, rels = self._get_one(walk[-1])
             idx = randint(0, len(neigh)-1)
-            walk.append(rels[idx])
+
+            if include_rel:
+                walk.append(rels[idx])
 
             # Self-loop means start over
             if rels[idx] == self.self_loop:
@@ -134,12 +140,12 @@ class CSR_np(CSR):
 
         return walk
 
-    def rw(self, batch, walk_len):
+    def rw(self, batch, walk_len, include_rel=True):
         walks = []
 
         # TODO threaded?
         for b in batch:
-            walks.append(self._rw_from_one(b, walk_len))
+            walks.append(self._rw_from_one(b, walk_len, include_rel=include_rel))
 
         return torch.tensor(walks) # B x S
 
