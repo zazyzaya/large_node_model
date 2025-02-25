@@ -3,6 +3,11 @@ from torch import nn
 
 from .positional_encoder import PositionalEncoding
 
+class TrueNorm(nn.Module):
+    def forward(self, x):
+        norm = x.norm(dim=-1, keepdim=True)
+        return x / norm
+
 class MaskedAttentionEmb(nn.Module):
     def __init__(self, num_nodes, num_rels, emb_dim=128, context_window=3, device='cpu', hidden_size=768, layers=12):
         super().__init__()
@@ -20,10 +25,7 @@ class MaskedAttentionEmb(nn.Module):
         self.num_nodes = num_nodes
         self.num_rels = num_rels
         self.num_embeddings = num_nodes+num_rels
-        self.embed = nn.Sequential(
-            nn.Embedding(num_nodes+num_rels, emb_dim, device=self.device),
-            nn.LayerNorm(emb_dim, device=self.device)
-        )
+        self.embed = nn.Embedding(num_nodes+num_rels, emb_dim, device=self.device)
 
         self.proj = nn.Sequential(
             nn.Linear(emb_dim, hidden_size, device=self.device),
@@ -42,45 +44,50 @@ class MaskedAttentionEmb(nn.Module):
         )
         self.out = nn.Sequential(
             nn.Linear(hidden_size, emb_dim, device=self.device),
-            nn.LayerNorm(emb_dim, device=self.device)
+            TrueNorm()
         )
         self.out_embs = nn.Sequential(
             nn.Embedding(num_nodes+num_rels, emb_dim, device=self.device),
-            nn.LayerNorm(emb_dim, device=self.device)
+            TrueNorm()
         )
 
-        self.loss = nn.BCEWithLogitsLoss()
+        self.mse_loss = nn.MSELoss()
 
     def build_mask(self, seq_len):
         '''
         Mask s.t. only nodes within the context window are visible
-        except for the target node.
-        E.g. if context window was 2-hops, then mask will be
+        But also, ensure starting nodes have center node in their context
+        window as well
+        E.g. if context window was 1 hop, then mask will be
         [
-            [0, 0, 0, 0, -inf, 0, 0, 0, 0, -inf, ..., -inf ]
-            [-inf, 0, 0, 0, 0, -inf, 0, 0, 0, 0, -inf, ..., -inf ]
-            ...
-            [-inf, ... , -inf, 0, 0, 0, 0, -inf, 0, 0, 0, 0]
+            [0,     0, -inf,   -inf, ..., -inf, -inf, -inf]
+            [0,     0,    0,   -inf, ..., -inf, -inf, -inf]
+            [-inf,  0,    0,    0,   ..., -inf, -inf, -inf],
+                         ...
+            [-inf, -inf, ...,  -inf,   0,    0,   0,  -inf]
+            [-inf, -inf, ...,  -inf,   -inf  0,   0,   0 ]
+            [-inf, -inf, -inf, -inf, ..., -inf,   0,   0 ]
         ]
 
         4 zeros, not 2 to capture (node, relation) pairs in the random walk
         '''
 
         mask = torch.full((seq_len, seq_len), float('-inf'), device=self.device)
-        submask = [0]*self.context_window*2
-        submask = submask + [float('-inf')] + submask
-        submask = torch.tensor(submask, device=self.device)
+        sm_size = self.context_window*2 + 1
 
-        offset = 0
         targets = []
-        for row in mask:
-            can_fit = row.size(-1)-offset
-            if can_fit >= submask.size(0):
-                row[offset:submask.size(0)+offset] = submask
-                targets.append(self.context_window+offset+1)
+        for i in range(mask.size(0)):
+            if i < self.context_window:
+                c_size = self.context_window+1+i
+                st = 0
+            elif i >= mask.size(0)-self.context_window:
+                st = i - self.context_window
             else:
-                break
-            offset += 1
+                c_size = sm_size
+                st = i - self.context_window
+                targets.append(i)
+
+            mask[i][st:st+c_size] = 0
 
         return mask, torch.tensor(targets, device=self.device)
 
@@ -106,46 +113,55 @@ class MaskedAttentionEmb(nn.Module):
         seq = seq.to(self.device).T # S x B
         mask,targets = self.build_mask(seq.size(0))
 
-        # Get tokens
-        z = self.embed(seq)
-        tokens = self.proj(z)
+        # Generate positive samples
+        tokens = self.proj(self.embed(seq))
         pe = self.pe(tokens)
         tokens = tokens + pe
-
-        # Run them through model
         preds = self.transformer.forward(tokens, mask)
         preds = self.out(preds)
 
-        # Use n2v-like loss to make Sum( f(u) * f(v) ) high
-        # for input u and neighbors v
-        # and Sum( f(u) * f(n) ) low for input u and neg samples n
-        preds = preds.transpose(0,1).transpose(1,2) # B x d x S
-        out_z = self.out_embs(seq).transpose(0,1)   # B x S x d
-        pos_dist = out_z @ preds     # B x S x S
+        # Generate negative samples
+        rnd_seq = torch.randint(0, self.num_nodes, seq.size(), device=self.device)
+        neg_tokens = self.proj(self.embed(rnd_seq))
+        pe = self.pe(neg_tokens)
+        neg_tokens = neg_tokens + pe
+        neg_preds = self.out(self.transformer(neg_tokens, mask))
 
-        # Each row is dot prod of target and all neighbors in context window
-        mask_mask = mask==0
-        mask[mask_mask] = 1
-        mask[~mask_mask] = 0
-        mask = mask.bool()
+        # Get middle nodes
+        centers = preds[targets]        # S x B x d
+        centers = centers.unsqueeze(1)  # S x 1 x B x d
 
-        pos_dist = pos_dist[:, mask].view(-1, self.context_window*2)
-        pos_dist = pos_dist.mean(dim=1)
+        # Get surrounding nodes
+        context_ids = torch.tensor([
+            [
+                j for j in range(i, i+self.context_window*2 + 1)
+                if j != i+self.context_window # Don't eval z_i * z_i as it will always be 1
+            ]
+            for i in range(centers.size(0))
+        ])
+        context = preds[context_ids] # S x ctxt x B x d
+        pos_scores = (centers * context).sum(dim=-1)
+        pos_scores = pos_scores.view(-1)
 
-        # Calculate distance of target node from random context window
-        neg = self.out_embs(torch.randint(0, self.num_nodes, seq.size(), device=self.device))
-        neg = neg.transpose(0,1).transpose(1,2)
-        neg_dist = out_z @ neg
-        neg_dist = neg_dist[:,mask].view(-1, self.context_window*2)
-        neg_dist = neg_dist.mean(dim=1)
+        # Get negative sample preds
+        neg_context = neg_preds[context_ids]
+        neg_scores = (centers * neg_context).sum(dim=-1)
+        neg_scores = neg_scores.view(-1)
 
-        # Run loss s.t. dot prod of neighbors and input is 1, otherwise 0
-        all_dists = torch.cat([pos_dist, neg_dist])
-        labels = torch.zeros(all_dists.size(), device=self.device)
-        labels[:pos_dist.size(0)] = 1
+        n2v_loss = (
+            -torch.log(torch.sigmoid(pos_scores) + 1e-8).mean()
+            -torch.log(1-torch.sigmoid(neg_scores) + 1e-8).mean()
+        )
 
-        loss = self.loss(all_dists, labels)
-        return loss
+        if torch.isnan(n2v_loss).any():
+            print("Hm")
+
+        # Make output embs more similar to transformer output
+        target = preds[targets].detach() # Don't affect transformer, only embeddings
+        out_emb = self.out_embs(seq[targets])
+        recon_loss = self.mse_loss(out_emb, target)
+
+        return n2v_loss, recon_loss
 
         '''
         # Old loss function

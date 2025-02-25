@@ -51,7 +51,7 @@ def eval(g, model: MaskedAttentionEmb):
 
 
 if __name__ == '__main__':
-    args,kwargs,sd = torch.load('masked_attn-old_loss.pt', weights_only=False, map_location=f'cuda:{DEVICE}')
+    args,kwargs,sd = torch.load('masked_attn.pt', weights_only=False, map_location=f'cuda:{DEVICE}')
     model = MaskedAttentionEmb(*args, **kwargs, device=DEVICE)
     model.eval()
 
