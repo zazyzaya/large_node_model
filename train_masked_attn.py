@@ -16,7 +16,7 @@ class Scheduler(LRScheduler):
     def get_lr(self):
         # Warmup period of 10k steps
         if self.last_epoch < 1_000:
-            return [group['initial_lr'] * (self.last_epoch / 1_000)
+            return [group['initial_lr'] #* (self.last_epoch / 1_000)
                     for group in self.optimizer.param_groups]
         # Linear decay after that
         else:
@@ -93,13 +93,13 @@ def train(g: Graph, model: MaskedAttentionEmb):
                     break
 
         e += 1
-        '''
-        # Don't do this for small dataset
-        torch.save(
-            (model.args, model.kwargs, model.state_dict()),
-            f'bert-{e}.pt'
-        )
-        '''
+        if e == 100:
+            break
+
+    torch.save(
+        (model.args, model.kwargs, model.state_dict()),
+        f'masked_attn.pt'
+    )
 
 
 
@@ -114,7 +114,7 @@ if __name__ == '__main__':
         device=DEVICE,
         layers=4,
         hidden_size=256,
-        context_window=2,
+        context_window=5,
     )
 
     train(g,model)

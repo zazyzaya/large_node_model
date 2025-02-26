@@ -5,7 +5,7 @@ from .positional_encoder import PositionalEncoding
 
 class TrueNorm(nn.Module):
     def forward(self, x):
-        norm = x.norm(dim=-1, keepdim=True)
+        norm = x.norm(dim=-1, keepdim=True) + 1e-8
         return x / norm
 
 class MaskedAttentionEmb(nn.Module):
@@ -117,7 +117,7 @@ class MaskedAttentionEmb(nn.Module):
         tokens = self.proj(self.embed(seq))
         pe = self.pe(tokens)
         tokens = tokens + pe
-        preds = self.transformer.forward(tokens, mask)
+        preds = self.transformer.forward(tokens) #, mask)
         preds = self.out(preds)
 
         # Generate negative samples
@@ -125,7 +125,7 @@ class MaskedAttentionEmb(nn.Module):
         neg_tokens = self.proj(self.embed(rnd_seq))
         pe = self.pe(neg_tokens)
         neg_tokens = neg_tokens + pe
-        neg_preds = self.out(self.transformer(neg_tokens, mask))
+        neg_preds = self.out(self.transformer(neg_tokens)) #, mask), mask))
 
         # Get middle nodes
         centers = preds[targets]        # S x B x d
@@ -159,7 +159,7 @@ class MaskedAttentionEmb(nn.Module):
         # Make output embs more similar to transformer output
         target = preds[targets].detach() # Don't affect transformer, only embeddings
         out_emb = self.out_embs(seq[targets])
-        recon_loss = self.mse_loss(out_emb, target)
+        recon_loss = 10 * self.mse_loss(out_emb, target)
 
         return n2v_loss, recon_loss
 

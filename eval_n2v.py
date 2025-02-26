@@ -1,7 +1,7 @@
 import torch
 from ogb.linkproppred import Evaluator
 
-from models.masked_attention import MaskedAttentionEmb
+from models.node2vec import Node2Vec
 from wiki_sampler import load_g, load_g_ddi
 
 DEVICE=3
@@ -34,17 +34,16 @@ def print_stats(mrr):
 
 
 @torch.no_grad()
-def eval(g, model: MaskedAttentionEmb):
+def eval(g, embed):
     # Input embeddings
-    h = torch.from_numpy(g['head']).to(DEVICE)
-    t = torch.from_numpy(g['tail']).to(DEVICE)
-    pos = (model.embed(h) * model.embed(t)).sum(dim=1)
+    h = torch.from_numpy(g['head'])
+    t = torch.from_numpy(g['tail'])
+    pos = (embed[h] * embed[t]).sum(dim=1)
 
-    h,t = torch.from_numpy(g['neg']).to(DEVICE)
-    neg = (model.embed(h) * model.embed(t)).sum(dim=1)
+    h,t = torch.from_numpy(g['neg'])
+    neg = (embed[h] * embed[t]).sum(dim=1)
 
     topk = neg.topk(100)[0]
-    print("Input embeddings")
     print(f'hits@1:  ({topk[0]:0.2f})\t', (pos >= topk[0]).float().mean().item())
     print(f'hits@5:  ({topk[4]:0.2f})\t', (pos >= topk[4]).float().mean().item())
     print(f'hits@10: ({topk[9]:0.2f})\t', (pos >= topk[9]).float().mean().item())
@@ -52,27 +51,9 @@ def eval(g, model: MaskedAttentionEmb):
     print(f'hits@100: ({topk[99]:0.2f})\t', (pos >= topk[99]).float().mean().item())
     print()
 
-    # Output embeddings
-    h = torch.from_numpy(g['head']).to(DEVICE)
-    t = torch.from_numpy(g['tail']).to(DEVICE)
-    pos = (model.out_embs(h) * model.out_embs(t)).sum(dim=1)
-
-    h,t = torch.from_numpy(g['neg']).to(DEVICE)
-    neg = (model.out_embs(h) * model.out_embs(t)).sum(dim=1)
-
-    topk = neg.topk(100)[0]
-    print("Out embeddings")
-    print('hits@1: \t', (pos >= topk[0]).float().mean().item())
-    print('hits@5: \t', (pos >= topk[4]).float().mean().item())
-    print('hits@10:\t', (pos >= topk[9]).float().mean().item())
-    print('hits@20:\t', (pos >= topk[19]).float().mean().item())
-    print('hits@100:\t', (pos >= topk[99]).float().mean().item())
-
 
 if __name__ == '__main__':
-    args,kwargs,sd = torch.load('masked_attn.pt', weights_only=False, map_location=f'cuda:{DEVICE}')
-    model = MaskedAttentionEmb(*args, **kwargs, device=DEVICE)
-    model.eval()
+    emb = torch.load('n2v.pt')
 
     g = load_g_ddi('test')
-    eval(g, model)
+    eval(g, emb)
