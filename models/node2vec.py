@@ -1,43 +1,70 @@
 import torch
 from torch import nn
 
-class Node2Vec(nn.Module):
-    def __init__(self, num_nodes, context_window=2, emb_size=128, device='cpu'):
-        super().__init__()
-        self.args = (num_nodes,)
-        self.kwargs = dict(emb_size=emb_size, context_window=context_window)
+from torch_geometric.nn.models import Node2Vec
+from models.positional_encoder import PositionalEncoding
+from models.masked_attention import TrueNorm
 
-        self.embed = nn.Embedding(num_nodes, emb_size, device=device)
-        self.device = device
-        self.context_window = context_window
+class AdvancedN2V(Node2Vec):
+    def __init__(self, edge_index, embedding_dim, walk_length, context_size, walks_per_node = 1, p = 1, q = 1, num_negative_samples = 1, num_nodes = None, sparse = False,
+                 hidden_size=256, transformer_layers=4):
+        super().__init__(edge_index, embedding_dim, walk_length, context_size, walks_per_node, p, q, num_negative_samples, num_nodes, sparse)
 
-    def forward(self, seq):
-        '''
-        seq: B x S
-        '''
-        seq = seq.to(self.device)
+        self.proj = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_size),
+            nn.GELU()
+        )
+        self.pe = PositionalEncoding(hidden_size)
 
-        center_ids = torch.arange(self.context_window, seq.size(1)-self.context_window-2)
-        context_ids = torch.tensor([
-            [
-                j for j in range(i, i+self.context_window*2 + 1)
-                if j != i+self.context_window # Don't eval z_i * z_i as it will always be 1
-            ]
-            for i in range(center_ids.size(0))
-        ])
-        centers = seq[:, center_ids]    # B x S
-        contexts = seq[:, context_ids]  # B x S x ctxt
+        self.transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                hidden_size, hidden_size//64,
+                dim_feedforward=hidden_size*4,
+                activation=nn.GELU()
+            ),
+            num_layers=transformer_layers
+        )
+        self.out = nn.Sequential(
+            nn.Linear(hidden_size, embedding_dim),
+            TrueNorm()
+        )
+        self.out_embs = nn.Embedding(self.embedding.num_embeddings, embedding_dim)
 
-        c_embs = self.embed(centers).unsqueeze(2) # B x S x 1 x d
-        ctxt_embs = self.embed(contexts)          # B x S x ctxt x d
-        rnd_embs = self.embed(torch.randint(0, self.embed.num_embeddings, contexts.size(), device=self.device))
+        self.mse_loss = nn.MSELoss()
 
-        pos_scores = (c_embs * ctxt_embs).sum(dim=-1).view(-1)
-        neg_scores = (c_embs * rnd_embs).sum(dim=-1).view(-1)
+    def loss(self, pos_rw, neg_rw):
+        pos_z = self.proj(self.embedding(pos_rw.T)) # S x B x d
+        pos_pe = self.pe(pos_z)
+        pos_z = pos_pe + pos_z
+        pos_z = self.out(self.transformer(pos_z))
+        pos_z = pos_z.transpose(0,1) # B x S x d
 
-        loss = (
-            -torch.log(torch.sigmoid(pos_scores) + 1e-8).mean()
-            -torch.log(1-torch.sigmoid(neg_scores) + 1e-8).mean()
+        start, rest = pos_z[:, 0], pos_z[:, 1:].contiguous()
+
+        h_start = start.view(pos_z.size(0), 1, self.embedding_dim)
+        h_rest = rest.view(-1).view(pos_z.size(0), -1, self.embedding_dim)
+
+        out = (h_start * h_rest).sum(dim=-1).view(-1)
+        pos_loss = -torch.log(torch.sigmoid(out) + self.EPS).mean()
+
+        recon_loss = self.mse_loss.forward(
+            self.out_embs(pos_rw[:, 0]),
+            start.detach()
         )
 
-        return loss
+        # Negative loss.
+        neg_z = self.proj(self.embedding(neg_rw.T)) # S x B x d
+        neg_pe = self.pe(neg_z)
+        neg_z = neg_pe + neg_z
+        neg_z = self.out(self.transformer(neg_z))
+        neg_z = neg_z.transpose(0,1) # B x S x d
+
+        start, rest = neg_z[:, 0], neg_z[:, 1:].contiguous()
+
+        h_start = start.view(neg_z.size(0), 1, self.embedding_dim)
+        h_rest = rest.view(-1).view(neg_z.size(0), -1, self.embedding_dim)
+
+        out = (h_start * h_rest).sum(dim=-1).view(-1)
+        neg_loss = -torch.log(1 - torch.sigmoid(out) + self.EPS).mean()
+
+        return (pos_loss + neg_loss), recon_loss
