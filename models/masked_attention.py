@@ -46,10 +46,7 @@ class MaskedAttentionEmb(nn.Module):
             nn.Linear(hidden_size, emb_dim, device=self.device),
             TrueNorm()
         )
-        self.out_embs = nn.Sequential(
-            nn.Embedding(num_nodes+num_rels, emb_dim, device=self.device),
-            TrueNorm()
-        )
+        self.out_embs = nn.Embedding(num_nodes+num_rels, emb_dim, device=self.device)
 
         self.mse_loss = nn.MSELoss()
 
@@ -159,7 +156,7 @@ class MaskedAttentionEmb(nn.Module):
         # Make output embs more similar to transformer output
         target = preds[targets].detach() # Don't affect transformer, only embeddings
         out_emb = self.out_embs(seq[targets])
-        recon_loss = 10 * self.mse_loss(out_emb, target)
+        recon_loss = self.mse_loss(out_emb, target)
 
         return n2v_loss, recon_loss
 

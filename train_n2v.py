@@ -11,7 +11,7 @@ DEVICE = 2
 BS = 32
 WALK_LEN = 40
 WALKS_PER_NODE = 10
-CONTEXT_SIZE = 20
+CONTEXT_SIZE = 10
 EPOCHS = 100
 
 
@@ -36,6 +36,10 @@ def train(model: AdvancedN2V):
             model.out_embs.weight.data,
             'my_n2v_out.pt'
         )
+    torch.save(
+        (model.args, model.kwargs, model.state_dict()),
+        'my_n2v_model.pt'
+    )
 
 
 

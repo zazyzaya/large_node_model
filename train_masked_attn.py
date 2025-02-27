@@ -7,21 +7,10 @@ from in_memory_graph import Graph
 from models.masked_attention import MaskedAttentionEmb
 
 DEVICE = 2
-MAX_STEPS = 1_000_000
+EPOCHS = 100
 MINI_BS = 512
 BS = 512
 WALK_LEN = 80 # Same as in original n2v paper
-
-class Scheduler(LRScheduler):
-    def get_lr(self):
-        # Warmup period of 10k steps
-        if self.last_epoch < 1_000:
-            return [group['initial_lr'] #* (self.last_epoch / 1_000)
-                    for group in self.optimizer.param_groups]
-        # Linear decay after that
-        else:
-            return [group['initial_lr'] * (1 - ((self.last_epoch-1_000)/(MAX_STEPS-1_000)))
-                    for group in self.optimizer.param_groups]
 
 def minibatch(g, mb, model: MaskedAttentionEmb):
     walks = g.rw(mb, WALK_LEN)
@@ -33,7 +22,6 @@ def minibatch(g, mb, model: MaskedAttentionEmb):
 def train(g: Graph, model: MaskedAttentionEmb):
     starters = g.nodes_with_neighbors
     opt = Adam(model.parameters(), lr=1e-4, weight_decay=0.01)
-    scheduler = Scheduler(opt)
 
     with open('log.txt', 'w+') as f:
         pass
@@ -44,63 +32,28 @@ def train(g: Graph, model: MaskedAttentionEmb):
     st = time.time()
 
     e = 0
-    while updates < MAX_STEPS:
+    for e in range(EPOCHS):
         minibatches = starters[torch.randperm(starters.size(0))]
         minibatches = minibatches.split(MINI_BS)
 
-        n2v_losses = []
-        recon_losses = []
         for i,mb in enumerate(minibatches):
+            st = time.time()
+            opt.zero_grad()
             n2v_loss,recon_loss = minibatch(g, mb, model)
+            opt.step()
+            en = time.time()
 
-            if updates % 100 == 99:
-                torch.save(
-                    (model.args, model.kwargs, model.state_dict()),
-                    'masked_attn.pt'
-                )
+            # Log epoch
+            with open('log.txt', 'a') as f:
+                f.write(f'{n2v_loss},{recon_loss},{updates}\n')
+            print(f'[{updates}-{e}] n2v: {n2v_loss:0.4f} recon: {recon_loss:0.4f} ({en-st:0.2f}s)')
 
-            if updates % 10000 == 9999:
-                torch.save(
-                    (model.args, model.kwargs, model.state_dict()),
-                    f'masked_attn-{(updates+1)//10000}.pt'
-                )
+            updates += 1
 
-            n2v_losses.append(n2v_loss)
-            recon_losses.append(recon_loss)
-            steps += 1
-
-            if steps*MINI_BS >= BS:
-                opt.step()
-                scheduler.step()
-                en = time.time()
-
-                # Log epoch
-                avg_n2v_loss = sum(n2v_losses) / len(n2v_losses)
-                avg_recon_loss = sum(recon_losses) / len(recon_losses)
-                with open('log.txt', 'a') as f:
-                    f.write(f'{avg_n2v_loss},{avg_recon_loss},{updates}\n')
-                print(f'[{updates}-{e}] n2v: {avg_n2v_loss:0.4f} recon: {avg_recon_loss:0.4f} (lr: {[g["lr"] for g in opt.param_groups][0]:0.2e}, {en-st:0.2f}s)')
-
-                # Reset accumulators
-                st = time.time()
-                n2v_losses = []
-                recon_losses = []
-                opt.zero_grad()
-                steps = 0
-                updates += 1
-
-                if updates > MAX_STEPS:
-                    break
-
-        e += 1
-        if e == 100:
-            break
-
-    torch.save(
-        (model.args, model.kwargs, model.state_dict()),
-        f'masked_attn.pt'
-    )
-
+        torch.save(
+            (model.args, model.kwargs, model.state_dict()),
+            'masked_attn.pt'
+        )
 
 
 if __name__ == '__main__':
